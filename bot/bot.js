@@ -55,9 +55,21 @@ const state = {
 // ============================================================================
 // ASSETS
 // ============================================================================
+// ============================================================================
+// ASSETS - Case-insensitive loading for Linux
+// ============================================================================
+function findFileIgnoreCase(folder, filename) {
+  const files = fs.readdirSync(folder);
+  const file = files.find(f => f.toLowerCase() === filename.toLowerCase());
+  if (!file) throw new Error(`File "${filename}" not found in ${folder}`);
+  return path.resolve(folder, file);
+}
+
+const ASSETS_FOLDER = path.resolve(__dirname, "assets");
+
 const ASSETS_PATH = {
-  logo: path.resolve(__dirname, "assets", "moneta.PNG"),
-  termsPdf: path.resolve(__dirname, "assets", "Moneta Funded Terms.pdf"),
+  logo: findFileIgnoreCase(ASSETS_FOLDER, "moneta.PNG"),
+  termsPdf: findFileIgnoreCase(ASSETS_FOLDER, "Moneta Funded Terms.pdf"),
 };
 
 const ASSETS = {
@@ -70,6 +82,7 @@ const ASSETS = {
 if (ASSETS.logoExists) ASSETS.logo = new InputFile(ASSETS_PATH.logo);
 if (ASSETS.termsPdfExists)
   ASSETS.termsPdf = new InputFile(ASSETS_PATH.termsPdf);
+
 
 // ============================================================================
 // VALIDATION HELPERS
