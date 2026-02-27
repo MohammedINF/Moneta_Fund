@@ -698,7 +698,7 @@ const buyAccount = {
     );
   },
 
-  handleTextInput: async (ctx) => {
+ handleTextInput: async (ctx) => {
     const userId = ctx.from.id;
     const session = state.buyAccountSessions.get(userId);
     if (!session) return false;
@@ -708,6 +708,10 @@ const buyAccount = {
     if (session.step === "NAME") {
       if (!text || text.length < 2) {
         await ctx.reply("⚠️ تکایە ناوێکی دروست بنووسە (کەمەکەم 2 پیت):");
+        return true;
+      }
+      if (/\d/.test(text)) {
+        await ctx.reply("⚠️ ناو نابێت ژمارە تێدا بێت. تکایە ناوی دروست بنووسە:");
         return true;
       }
       session.name = text;
@@ -758,7 +762,6 @@ const buyAccount = {
 
     return false;
   },
-
   processOrder: async (ctx, accountType, userInfo, sameTypeRow = null) => {
     const userId = ctx.from.id;
 
