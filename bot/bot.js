@@ -53,9 +53,6 @@ const state = {
 };
 
 // ============================================================================
-// ASSETS
-// ============================================================================
-// ============================================================================
 // ASSETS - Case-insensitive loading for Linux
 // ============================================================================
 function findFileIgnoreCase(folder, filename) {
@@ -309,7 +306,7 @@ const TERMS_TEXT = `📋 *یاسا و مەرجەکانی هەژماری فەند
 ٥ دەقە پێش و ٥ دەقە دوای هەواڵی بەهێز مامەڵە ڕێگەپێنەدراوە.
 
 📌 *٥ - چالاک بوون*
-ئەگەر ٣٠ ڕۆژ مامەڵە نەکەیت ئەکاونتەکەت داخردەکرێت.
+ئەگەر ٣٠ ڕۆژ مامەڵە نەکەیت ئەکاونتەکەت دادەخرێت.
 
 📌 *٦ - دابەش کردنی قازانج*
 ٪٨٨ قازانج بۆ ترەیدەر، ٪١٢ بۆ کۆمپانیا.
@@ -392,7 +389,7 @@ const MENUS = {
         { text: "🔥 Phoenix Challenge", callback_data: "BUY_PHOENIX" },
         { text: "⚡ Instant Funding", callback_data: "BUY_INSTANT" },
       ],
-      [{ text: "سەرەکی", callback_data: "BACK_MAIN" }],
+      [{ text: "⬅️ گەڕانەوە بۆ سەرەکی", callback_data: "BACK_MAIN" }],
     ],
   },
 
@@ -403,7 +400,7 @@ const MENUS = {
         inline_keyboard: [
           [
             { text: "کڕینی ئەم هەژمارە", callback_data: `TERMS_${t}` },
-            { text: "گەڕانەوە", callback_data: "MENU_BUY_ACCOUNT" },
+            { text: "⬅️ گەڕانەوە", callback_data: "MENU_BUY_ACCOUNT" },
           ],
         ],
       },
@@ -424,9 +421,18 @@ const MENUS = {
     ]),
   ),
 
+  // Back to main only (used by info pages & error messages)
   backToMain: {
-    inline_keyboard: [[{ text: "سەرەکی", callback_data: "BACK_MAIN" }]],
+    inline_keyboard: [[{ text: "⬅️ گەڕانەوە بۆ سەرەکی", callback_data: "BACK_MAIN" }]],
   },
+
+  // Back to main + open account link (used after successful purchase)
+  purchaseSuccess: (accountType, url) => ({
+    inline_keyboard: [
+      [{ text: `🔗 کردنەوەی هەژماری ${accountType}`, url }],
+      [{ text: "⬅️ گەڕانەوە بۆ سەرەکی", callback_data: "BACK_MAIN" }],
+    ],
+  }),
 };
 
 // ============================================================================
@@ -515,6 +521,56 @@ const sendTermsPdf = async (ctx) => {
 
 let cachedLogoFileId = null;
 
+// ============================================================================
+// CORE: Send moneta.png as cover photo with text as caption (or fallback)
+// ============================================================================
+const sendPhotoWithText = async (ctx, text, parseMode = "Markdown", replyMarkup = null) => {
+  const MAX_CAPTION = 1024;
+  const options = { parse_mode: parseMode };
+  if (replyMarkup) options.reply_markup = replyMarkup;
+
+  const sendPhoto = async (extraOpts = {}) => {
+    if (cachedLogoFileId) {
+      return await ctx.replyWithPhoto(cachedLogoFileId, extraOpts);
+    } else {
+      const msg = await ctx.replyWithPhoto(new InputFile(ASSETS_PATH.logo), extraOpts);
+      const photos = msg.photo;
+      if (photos && photos.length > 0) {
+        cachedLogoFileId = photos[photos.length - 1].file_id;
+      }
+      return msg;
+    }
+  };
+
+  if (!ASSETS.logoExists) {
+    await ctx.reply(text, options).catch(() => {});
+    return;
+  }
+
+  if (text.length <= MAX_CAPTION) {
+    try {
+      await sendPhoto({ caption: text, ...options });
+    } catch (err) {
+      console.error("sendPhotoWithText (caption) failed:", err);
+      try {
+        await sendPhoto();
+        await ctx.reply(text, options);
+      } catch (e) {
+        console.error("sendPhotoWithText fallback failed:", e);
+        await ctx.reply(text, options).catch(() => {});
+      }
+    }
+  } else {
+    try {
+      await sendPhoto();
+      await ctx.reply(text, options);
+    } catch (err) {
+      console.error("sendPhotoWithText (long text) failed:", err);
+      await ctx.reply(text, options).catch(() => {});
+    }
+  }
+};
+
 const sendMainMenu = async (ctx) => {
   try {
     if (ASSETS.logoExists) {
@@ -552,9 +608,9 @@ const sendMainMenu = async (ctx) => {
   }
 };
 
-const replyWithMenu = async (ctx, text, parseMode = "Markdown") => {
-  await ctx.reply(text, { parse_mode: parseMode }).catch(() => {});
-  await sendMainMenu(ctx);
+// Helper: show photo+text with a back-to-main button — does NOT send main menu automatically
+const replyWithBackButton = async (ctx, text, parseMode = "Markdown") => {
+  await sendPhotoWithText(ctx, text, parseMode, MENUS.backToMain);
 };
 
 // ============================================================================
@@ -563,18 +619,12 @@ const replyWithMenu = async (ctx, text, parseMode = "Markdown") => {
 const buyAccount = {
   showTypes: async (ctx) => {
     try {
-      if (ASSETS.logoExists && cachedLogoFileId) {
-        await ctx.replyWithPhoto(cachedLogoFileId, {
-          caption: "🛒 *کڕینی هەژمار*\n\nجۆری هەژمارەکەت هەڵبژێرە:",
-          parse_mode: "Markdown",
-          reply_markup: MENUS.buyAccountTypes,
-        });
-      } else {
-        await ctx.reply("🛒 *کڕینی هەژمار*\n\nجۆری هەژمارەکەت هەڵبژێرە:", {
-          parse_mode: "Markdown",
-          reply_markup: MENUS.buyAccountTypes,
-        });
-      }
+      await sendPhotoWithText(
+        ctx,
+        "🛒 *کڕینی هەژمار*\n\nجۆری هەژمارەکەت هەڵبژێرە:",
+        "Markdown",
+        MENUS.buyAccountTypes,
+      );
     } catch (error) {
       console.error("Error in showTypes:", error);
       await ctx
@@ -589,24 +639,20 @@ const buyAccount = {
   showAccountInfo: async (ctx, accountType) => {
     const infoText = ACCOUNT_INFO[accountType];
     if (!infoText) return;
-    await ctx.reply(infoText, {
-      parse_mode: "Markdown",
-      reply_markup: MENUS.proceedToTerms[accountType],
-    });
+    await sendPhotoWithText(ctx, infoText, "Markdown", MENUS.proceedToTerms[accountType]);
   },
 
   showTerms: async (ctx, accountType) => {
     await sendTermsPdf(ctx);
-    await ctx.reply(TERMS_TEXT, {
-      parse_mode: "Markdown",
-      reply_markup: MENUS.termsAgree[accountType],
-    });
+    await sendPhotoWithText(ctx, TERMS_TEXT, "Markdown", MENUS.termsAgree[accountType]);
   },
 
   handleDisagreed: async (ctx) => {
-    await ctx.reply(
+    await sendPhotoWithText(
+      ctx,
       "❌ ناڕازی بوویت بە مەرجەکان.\n\nئەگەر دواتر بیرت گەڕایەوە، دەتوانیت دووبارە هەوڵ بدەیت.",
-      { reply_markup: MENUS.backToMain },
+      "Markdown",
+      MENUS.backToMain,
     );
   },
 
@@ -724,6 +770,9 @@ const buyAccount = {
       }
     }
 
+    const url = CONFIG.accountUrls[accountType] || "#";
+    const keyboard = MENUS.purchaseSuccess(accountType, url);
+
     if (sameTypeRow) {
       const isExactMatch =
         sameTypeRow.name.toLowerCase().trim() ===
@@ -735,14 +784,8 @@ const buyAccount = {
 
       if (isExactMatch) {
         await db.updateCreatedAt(sameTypeRow.id);
-
-        const url = CONFIG.accountUrls[accountType] || "#";
-        const keyboard = new InlineKeyboard().url(
-          `🔗 کردنەوەی هەژماری ${accountType}`,
-          url,
-        );
-
-        await ctx.reply(
+        await sendPhotoWithText(
+          ctx,
           `🔄 *زانیاریەکانت پێشتر تۆمار کراون!*\n\n` +
             `👤 ناو: ${userInfo.name}\n` +
             `📞 تەلەفۆن: ${userInfo.phone}\n` +
@@ -750,9 +793,9 @@ const buyAccount = {
             `💼 جۆری هەژمار: *${accountType}*\n\n` +
             `⏱ بەرواری کڕین نوێکرایەوە.\n\n` +
             `کرتە لە دوگمەی خوارەوە بکە بۆ کردنەوەی هەژمارەکەت:`,
-          { parse_mode: "Markdown", reply_markup: keyboard },
+          "Markdown",
+          keyboard,
         );
-        await sendMainMenu(ctx);
         return;
       }
     }
@@ -766,28 +809,26 @@ const buyAccount = {
     });
 
     if (!saved) {
-      await ctx.reply(
+      await sendPhotoWithText(
+        ctx,
         "❌ هەڵە ڕووی دا لە کاتی هەڵگرتنی زانیاری. تکایە دواتر هەوڵ بدەرەوە.",
+        "Markdown",
+        MENUS.backToMain,
       );
       return;
     }
 
-    const url = CONFIG.accountUrls[accountType] || "#";
-    const keyboard = new InlineKeyboard().url(
-      `🔗 کردنەوەی هەژماری ${accountType}`,
-      url,
-    );
-
-    await ctx.reply(
+    await sendPhotoWithText(
+      ctx,
       `🎉 *زانیاریەکانت تۆمار کران!*\n\n` +
         `👤 ناو: ${userInfo.name}\n` +
         `📞 تەلەفۆن: ${userInfo.phone}\n` +
         `📧 ئیمەیڵ: ${userInfo.email}\n` +
         `💼 جۆری هەژمار: *${accountType}*\n\n` +
         `کرتە لە دوگمەی خوارەوە بکە بۆ کردنەوەی هەژمارەکەت:`,
-      { parse_mode: "Markdown", reply_markup: keyboard },
+      "Markdown",
+      keyboard,
     );
-    await sendMainMenu(ctx);
   },
 };
 
@@ -804,9 +845,11 @@ const callbackHandlers = {
   BACK_MAIN: sendMainMenu,
 
   MENU_ACCOUNTS_LIST: async (ctx) => {
-    await ctx.reply(
+    await sendPhotoWithText(
+      ctx,
       "📋 *هەژماری فەند*\n\nجۆری هەژمارەکەت هەڵبژێرە بۆ زانیاری زیاتر:",
-      { parse_mode: "Markdown", reply_markup: MENUS.accountsList },
+      "Markdown",
+      MENUS.accountsList,
     );
   },
 
@@ -823,41 +866,43 @@ const callbackHandlers = {
       .row()
       .text("⬅️ گەڕانەوە بۆ سەرەکی", "BACK_MAIN");
 
-    await ctx.reply(
+    await sendPhotoWithText(
+      ctx,
       `🤝 *پشتگیری مۆنیتا فەندد*\n\n` +
         `ئەگەر پرسیارت هەیە یان کێشەیەکت هەیە، تیمی پشتگیریمان ئامادەیە یارمەتیت بدات.\n\n` +
         `⏰ کاتی کار: ٢٤/٧\n\n` +
         `کرتە لە دوگمەی خوارەوە بکە بۆ پەیوەندی کردن:`,
-      { parse_mode: "Markdown", reply_markup: keyboard },
+      "Markdown",
+      keyboard,
     );
   },
 
   MENU_ABOUT_Fund: (ctx) =>
-    replyWithMenu(
+    replyWithBackButton(
       ctx,
       "ℹ️ *مۆنیتا فەندد چییە؟*\n\nمۆنیتا فەندد کۆمپانیایەکی بازرگانی تایبەتمەندە کە خاوەنی چەندین خەڵاتی نێودەوڵەتییە لەلایەن مۆنیتا مارکێتەوە پشتگیری دەکرێت کە خاوەنی ئەزموونی زیاتر لە دە ساڵە لە بازاڕە داراییەکان و پێشەنگە.",
     ),
 
   MENU_FUND_SERVICES: (ctx) =>
-    replyWithMenu(
+    replyWithBackButton(
       ctx,
       `📊 *هەژماری فەند چیە؟*\n\nهەژمارێکی بازرگانیە کە کۆمپانیای مۆنێتافەندد سەرمایەیی خۆیی هاوبەشی پێدەکات لەگەڵ ترەیدەر بۆ ئەوەی لە بازاڕەداراییەکان ترەید بکات، ئەگەر ترەیدەر قانزاج بکات ئەوە قانزاجەکە دابەش دەکرێت لە نێوانیاندا بە ڕێژەیەکی دیاریکراو.\n\n*هەژماری فەند چۆن کار دەکات؟*\n\nکارکردنی هەژماری فەند لە مۆنێتافەندد بە دوو شێوازە:\n\n١) هەژماری (1step & 2step Challenge) تاقیکردنەوە: لەم جۆرە هەژمارەدا ترەیدەر تاقیکردنەوە دەکات لەسەر هەژمارێکی دیاریکراو بەپێی ڕێنمایی و یاساکانی کۆمپانیا.\n\n٢) هەژماری فەرمی (instant & phoenix): لەم جۆرە هەژمارەدا ترەیدەر تاقیکردنەوە ناکات بەڵکو ڕاستەوخۆ لەسەر هەژماری فەرمی مامەڵە دەکات.`,
     ),
 
   MENU_FUND_ADVANTAGE: (ctx) =>
-    replyWithMenu(
+    replyWithBackButton(
       ctx,
       `💡 *سوودی هەژماری فەند چیە؟*\n\n١) دەتوانیت بە سەرماییەکی گەورەتر و پارەیەکی زۆرتر مامەڵە بکەیت.\n\n٢) مەترسی لە دەست دانی سەرمایە و پارەی خۆت کەمترە.\n\n٣) بە بڕە پارەیەکی کەمتر دەتوانی سوودمەند بیت.`,
     ),
 
   MENU_FUND_RULS: (ctx) =>
-    replyWithMenu(
+    replyWithBackButton(
       ctx,
       `📜 *مەرجەکانی سوودمەند بوون لە هەژماری فەند چیە؟*\n\nمەرجی سوودمەند بوون لە هەژماری فەند ڕەزامەندی تەواوە لەسەر یاسا و مەرج و ڕێنمایی هەر جۆرە هەژمارێکی فەند. بەژداربوو پێویستە سەرجەم ڕێنمایی و یاساکان بخوێنێتەوە و ڕەزامەندی تەواو بدات.`,
     ),
 
   MENU_FUND_DIFFRENT: (ctx) =>
-    replyWithMenu(
+    replyWithBackButton(
       ctx,
       `⚖️ *جیاوازی هەژماری فەندو ئەکاونتی ڕاستەقینە چیە؟*\n\n🏦 *هەژماری فەند:*\nپارەو سەرمایەکە هی کۆمپانیاکەیەو تۆ تەنها ترەید دەکەیت و قازانج دابەش دەکرێت ٪٨٨ بۆخۆت و ٪١٢ بۆ کۆمپانیا.\nئازادی تەواوت نیە لە ترەیدکردندا.\nدەتوانیت بەپارەی گەورەتر ترەیدبکەیت بێ ئەوەی پارەی زۆرت هەبێت.\n\n💰 *ئەکاونتی ڕاستەقینە:*\nپارەکە هی خۆتەو هەمووقانزانجەکە ٪١٠٠ بۆخۆتە.\nئازادی تەواو لەمامەڵەکردن.\nمەترسی زۆرە بۆسەرمایەی خۆت.`,
     ),
@@ -874,19 +919,22 @@ const callbackHandlers = {
       `📹 فێرکاری: چۆنێتی KYC کردن لە مۆنێتا فەندد\n` +
       `https://youtube.com/shorts/hmTbmz4BqCg?si=fa0e9Cpvw24oD4Br`;
 
-    await ctx.reply(videoText, {
-      parse_mode: "Markdown",
-      reply_markup: MENUS.backToMain,
-    });
+    await sendPhotoWithText(ctx, videoText, "Markdown", MENUS.backToMain);
   },
 
   MENU_FUND_TERMS: async (ctx) => {
     await sendTermsPdf(ctx);
-    await sendMainMenu(ctx);
+    // PDF is sent, show a back button message instead of re-sending the full main menu
+    await sendPhotoWithText(
+      ctx,
+      "📋 *مەرج و ڕێنماییەکان*\n\nFull PDF سەرەوە نێردراوە. تکایە بیخوێنەرەوە.",
+      "Markdown",
+      MENUS.backToMain,
+    );
   },
 
   MENU_FUND_LAWS: (ctx) =>
-    replyWithMenu(
+    replyWithBackButton(
       ctx,
       `یاسا گشتیەکان | General Rules
 
@@ -916,34 +964,8 @@ const callbackHandlers = {
 - پێویستە لانیکەم 5 ڕۆژ قازانج بەدەست بهێنرێت.
 - لە هەر ڕۆژێکدا دەبێت لانیکەم 0.5% ی قەبارەی ئەکاونتەکە یان زیاتر خێر بەدەست بهێنرێت.
 
-ئەمە مەرجە بۆ:
-- سەرکەوتن لە Challenge (1-Step و 2-Step)
-- جێبەجێکردنی پارە ڕاکێشانەوە لە Phoenix و Instant
-
-نموونەی 1: ئەکاونتی 5,000$
-0.5% = 25$
-
-ڕۆژی 1: -20$  (نەگونجاو)
-ڕۆژی 2: +40$  (گونجاو)
-ڕۆژی 3: -80$  (نەگونجاو)
-ڕۆژی 4: +120$ (گونجاو)
-ڕۆژی 5: +25$  (گونجاو)
-
-ڕۆژانی 2 و 4 و 5 زیاتر لە 0.5% گەشەیان پێدا و یاساکە جێبەجێ کراوە.
-
-نموونەی 2: ئەکاونتی 100,000$
-0.5% = 500$
-
-ڕۆژی 1: +550$ (گونجاو)
-ڕۆژی 2: +520$ (گونجاو)
-ڕۆژی 3: +500$ (گونجاو)
-ڕۆژی 4: -600$ (نەگونجاو)
-ڕۆژی 5: +200$ (کەمتر لە 0.5%)
-
-ڕۆژانی 1 و 2 و 3 زیاتر لە 0.5% گەشەیان پێدا و یاساکە جێبەجێ کراوە.
-
 5) Inactivity Rule (یاسای ناچالاکی):
-ئەگەر ترەیدەر بۆ ماوەی 30 ڕۆژ هیچ مامەڵەیەک ئەنجام نەدات، کۆمپانیا مافی هەیە ئەکاونتەکەی بباند بکات.
+ئەگەر ترەیدەر بۆ ماوەی 30 ڕۆژ هیچ مامەڵەیەک ئەنجام نەدات، کۆمپانیا مافی هەیە ئەکاونتەکەی باند بکات.
 
 6) News Trading:
 5 دەقە پێش هەواڵی بەهێز و 5 دەقە دوای هەواڵی بەهێز مامەڵەکردن ڕێگەپێنەدراوە.
@@ -952,12 +974,13 @@ const callbackHandlers = {
 88% لە قازانج بۆ ترەیدەر دەگەڕێتەوە.
 
 8) Payout:
-هەر 14 ڕۆژ جارێک ترەیدەر دەتوانێت داوای پارە ڕاکێشانەوە بکات.
-`,
+هەر 14 ڕۆژ جارێک ترەیدەر دەتوانێت داوای پارە ڕاکێشانەوە بکات.`,
     ),
 };
 
-// ✅ FIXED CALLBACK HANDLER
+// ============================================================================
+// CALLBACK QUERY HANDLER
+// ============================================================================
 bot.on("callback_query", async (ctx) => {
   const data = ctx.callbackQuery.data;
 
@@ -983,10 +1006,7 @@ bot.on("callback_query", async (ctx) => {
       const accountType = data.slice(5);
       const infoText = ACCOUNT_INFO[accountType];
       if (infoText) {
-        await ctx.reply(infoText, {
-          parse_mode: "Markdown",
-          reply_markup: MENUS.backToAccountsList,
-        });
+        await sendPhotoWithText(ctx, infoText, "Markdown", MENUS.backToAccountsList);
         if (ASSETS.termsPdfExists) {
           await ctx.replyWithDocument(new InputFile(ASSETS_PATH.termsPdf), {
             caption: "📄 یاسا و مەرجەکان",
